@@ -36,8 +36,6 @@ bash <(curl -Ls https://raw.githubusercontent.com/Firefly-xui/vless/master/VLESS
 
 
 
-
-
 | 协议组合                            | 抗封锁   | 延迟    | 稳定性   | 部署复杂度 | 适用建议       |
 | ------------------------------- | ----- | ----- | ----- | ----- | ---------- |
 | Hysteria2 + UDP + TLS + Obfs    | ★★★☆☆ | ★★★★★ | ★★★☆☆ | ★★☆☆☆ | 流媒体 / 备用   |
