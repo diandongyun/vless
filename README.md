@@ -8,7 +8,7 @@
 ## OS  
 - Ubuntu 22-24
 
-
+-FinalShell下载地址 [FinalShell](https://dl.hostbuf.com/finalshell3/finalshell_windows_x64.exe)
 
 # VLESS+Reality+uTLS+Vision+Xray-core协议
 ```
