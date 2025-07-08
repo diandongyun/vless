@@ -34,7 +34,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/Firefly-xui/vless/master/VLESS
 
 注重隐蔽性和可信度
 
-
+windows客户端
+-官方v2rayn [v2rayn](https://github.com/2dust/v2rayN/releases/download/7.12.7/v2rayN-windows-64-desktop.zip)
 
 | 协议组合                            | 抗封锁   | 延迟    | 稳定性   | 部署复杂度 | 适用建议       |
 | ------------------------------- | ----- | ----- | ----- | ----- | ---------- |
