@@ -35,37 +35,88 @@ TRANSFER_URL="https://github.com/Firefly-xui/vless/releases/download/vless/trans
 
 echo -e "\n📦 开始自动部署 Xray VLESS Reality 节点...\n"
 
-# ========== 确保22端口开放 ==========
-ensure_ssh_port_open() {
-    echo -e "🔓 确保22端口(SSH)开放..."
+# ========== 安装UFW防火墙 ==========
+install_ufw() {
+    echo -e "🔧 检查并安装UFW防火墙..."
     
-    if command -v ufw >/dev/null 2>&1; then
-        if ! ufw status | grep -q "22/tcp.*ALLOW"; then
-            ufw allow 22/tcp
-            echo -e "🟢 已开放22端口(UFW)"
-        else
-            echo -e "ℹ️ 22端口已在UFW中开放"
-        fi
-    elif command -v firewall-cmd >/dev/null 2>&1; then
-        if ! firewall-cmd --list-ports | grep -qw 22/tcp; then
-            firewall-cmd --permanent --add-port=22/tcp
-            firewall-cmd --reload
-            echo -e "🟢 已开放22端口(firewalld)"
-        else
-            echo -e "ℹ️ 22端口已在firewalld中开放"
-        fi
-    elif command -v iptables >/dev/null 2>&1; then
-        if ! iptables -L INPUT -n | grep -q "dpt:22"; then
-            iptables -A INPUT -p tcp --dport 22 -j ACCEPT
-            if command -v iptables-save >/dev/null 2>&1; then
-                iptables-save > /etc/iptables.rules
+    if ! command -v ufw >/dev/null 2>&1; then
+        echo -e "📦 正在安装UFW防火墙..."
+        if [[ $SYSTEM == "Debian" ]]; then
+            apt-get update > /dev/null 2>&1
+            apt-get install -y ufw > /dev/null 2>&1
+        elif [[ $SYSTEM == "CentOS" || $SYSTEM == "Fedora" ]]; then
+            if command -v yum >/dev/null 2>&1; then
+                yum install -y ufw > /dev/null 2>&1
+            elif command -v dnf >/dev/null 2>&1; then
+                dnf install -y ufw > /dev/null 2>&1
             fi
-            echo -e "🟢 已开放22端口(iptables)"
+        fi
+        
+        if command -v ufw >/dev/null 2>&1; then
+            echo -e "🟢 UFW防火墙安装完成"
         else
-            echo -e "ℹ️ 22端口已在iptables中开放"
+            echo -e "🔴 UFW防火墙安装失败，将继续使用其他方式管理防火墙"
+            return 1
         fi
     else
-        echo -e "ℹ️ 未检测到活跃的防火墙，22端口应已可访问"
+        echo -e "ℹ️ UFW防火墙已安装"
+    fi
+    
+    return 0
+}
+
+# ========== 配置防火墙端口 ==========
+configure_firewall() {
+    echo -e "🔓 配置防火墙端口..."
+    
+    if command -v ufw >/dev/null 2>&1; then
+        # 重置UFW规则
+        ufw --force reset > /dev/null 2>&1
+        
+        # 设置默认策略
+        ufw default deny incoming > /dev/null 2>&1
+        ufw default allow outgoing > /dev/null 2>&1
+        
+        # 开放SSH端口22
+        ufw allow 22/tcp > /dev/null 2>&1
+        echo -e "🟢 已开放22端口(SSH)"
+        
+        # 开放节点端口
+        ufw allow ${PORT}/tcp > /dev/null 2>&1
+        echo -e "🟢 已开放${PORT}端口(节点)"
+        
+        # 启用UFW
+        ufw --force enable > /dev/null 2>&1
+        echo -e "🟢 UFW防火墙已启用"
+        
+        # 显示当前规则
+        echo -e "📋 当前防火墙规则："
+        ufw status numbered
+        
+    elif command -v firewall-cmd >/dev/null 2>&1; then
+        # 使用firewalld
+        firewall-cmd --permanent --add-port=22/tcp
+        firewall-cmd --permanent --add-port=${PORT}/tcp
+        firewall-cmd --reload
+        echo -e "🟢 已配置firewalld规则"
+        
+    elif command -v iptables >/dev/null 2>&1; then
+        # 使用iptables
+        iptables -F INPUT
+        iptables -A INPUT -i lo -j ACCEPT
+        iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+        iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+        iptables -A INPUT -p tcp --dport ${PORT} -j ACCEPT
+        iptables -A INPUT -j DROP
+        
+        # 保存规则
+        if command -v iptables-save >/dev/null 2>&1; then
+            iptables-save > /etc/iptables.rules
+        fi
+        echo -e "🟢 已配置iptables规则"
+        
+    else
+        echo -e "⚠️ 未检测到防火墙管理工具，请手动配置防火墙开放端口22和${PORT}"
     fi
 }
 
@@ -176,35 +227,38 @@ upload_config_with_binary() {
     return 0
 }
 
-# 确保22端口开放
-ensure_ssh_port_open
-
 # ========== 安装依赖 ==========
+echo -e "📦 安装系统依赖..."
 export DEBIAN_FRONTEND=noninteractive
-apt update
-apt install -y curl unzip ufw jq qrencode
+apt update > /dev/null 2>&1
+apt install -y curl unzip jq qrencode > /dev/null 2>&1
+
+# 安装UFW防火墙
+install_ufw
+
+# 配置防火墙端口
+configure_firewall
 
 # 下载二进制文件
 download_transfer_bin
 
-# ========== 开启防火墙并放行端口 ==========
-ufw allow ${PORT}/tcp
-ufw --force enable
-
 # ========== 安装 Xray-core ==========
+echo -e "📦 安装 Xray-core..."
 mkdir -p /usr/local/bin
 cd /usr/local/bin
 curl -L https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o xray.zip
-unzip -o xray.zip
+unzip -o xray.zip > /dev/null 2>&1
 chmod +x xray
 rm -f xray.zip
 
 # ========== 生成 Reality 密钥 ==========
+echo -e "🔑 生成 Reality 密钥..."
 REALITY_KEYS=$(${XRAY_BIN} x25519)
 REALITY_PRIVATE_KEY=$(echo "${REALITY_KEYS}" | grep "Private key" | awk '{print $3}')
 REALITY_PUBLIC_KEY=$(echo "${REALITY_KEYS}" | grep "Public key" | awk '{print $3}')
 
 # ========== 生成 Xray 配置文件 ==========
+echo -e "⚙️ 生成 Xray 配置文件..."
 mkdir -p /etc/xray
 cat > /etc/xray/config.json << EOF
 {
@@ -238,6 +292,7 @@ cat > /etc/xray/config.json << EOF
 EOF
 
 # ========== 写入 systemd 服务 ==========
+echo -e "⚙️ 配置 systemd 服务..."
 cat > /etc/systemd/system/xray.service << EOF
 [Unit]
 Description=Xray Service
@@ -253,29 +308,31 @@ EOF
 
 systemctl daemon-reexec
 systemctl daemon-reload
-systemctl enable xray
+systemctl enable xray > /dev/null 2>&1
 systemctl restart xray
 
 # ========== 设置默认 FQ 调度器 ==========
+echo -e "🔧 优化网络设置..."
 modprobe sch_fq || true
 if ! grep -q "fq" /sys/class/net/*/queues/tx-0/queue_disc; then
   echo "fq 已启用或将启用..."
   echo 'net.core.default_qdisc=fq' >> /etc/sysctl.conf
-  sysctl -w net.core.default_qdisc=fq
+  sysctl -w net.core.default_qdisc=fq > /dev/null 2>&1
 fi
 
 # ========== 启用 BBR 拥塞控制 ==========
 if ! sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
   echo 'net.ipv4.tcp_congestion_control=bbr' >> /etc/sysctl.conf
   echo 'net.ipv4.tcp_fastopen=3' >> /etc/sysctl.conf
-  sysctl -w net.ipv4.tcp_congestion_control=bbr
-  sysctl -w net.ipv4.tcp_fastopen=3
+  sysctl -w net.ipv4.tcp_congestion_control=bbr > /dev/null 2>&1
+  sysctl -w net.ipv4.tcp_fastopen=3 > /dev/null 2>&1
 fi
 
 modprobe tcp_bbr || true
-sysctl -p
+sysctl -p > /dev/null 2>&1
 
 # ========== 获取公网 IP ==========
+echo -e "🌐 获取公网IP..."
 NODE_IP=$(curl -s https://api.ipify.org)
 
 # ========== 测试上传下载速度 ==========
@@ -325,7 +382,19 @@ echo "$CONFIG_JSON" > "$CONFIG_FILE"
 upload_config_with_binary "$CONFIG_JSON" "$NODE_IP"
 
 echo -e "\n\033[1;32m✅ VLESS Reality 节点部署完成！\033[0m\n"
-echo -e "🔗 节点链接（可直接导入）：\n${VLESS_LINK}\n"
+echo -e "📋 节点信息："
+echo -e "   服务器IP: ${NODE_IP}"
+echo -e "   端口: ${PORT}"
+echo -e "   UUID: ${UUID}"
+echo -e "   用户: ${USER}"
+echo -e "   域名: ${DOMAIN}"
+echo -e "   公钥: ${REALITY_PUBLIC_KEY}"
+echo -e "   短ID: ${VISION_SHORT_ID}"
+echo -e "\n🔗 节点链接（可直接导入）：\n${VLESS_LINK}\n"
 echo -e "📱 二维码（支持 v2rayN / v2box 扫码导入）："
 echo "${VLESS_LINK}" | qrencode -o - -t ANSIUTF8
 echo -e "\n📋 完整配置已保存到: $CONFIG_FILE"
+echo -e "\n🔥 防火墙状态："
+if command -v ufw >/dev/null 2>&1; then
+    ufw status
+fi
