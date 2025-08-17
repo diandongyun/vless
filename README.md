@@ -12,7 +12,7 @@
 
 # VLESS+Reality+uTLS+Vision+Xray-core协议
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/Firefly-xui/vless/master/VLESS+Reality+uTLS+Vision+Xray-core.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/diandongyun/vless/master/VLESS+Reality+uTLS+Vision+Xray-core.sh)
 ```  
 
 
